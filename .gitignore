@@ -1,0 +1,19 @@
+.DS_Store
+
+# Generated release staging output. Upload these to GitHub Releases instead of committing them.
+build/
+static-mirror/
+release-assets/
+manifest.json
+urls.tsv
+adhans/
+library/
+prayer-params/
+quran/
+
+# Binary asset packs should not be stored as normal repository files.
+*.zip
+*.sqlite
+*.sqlite3
+*.db
+*.mp3

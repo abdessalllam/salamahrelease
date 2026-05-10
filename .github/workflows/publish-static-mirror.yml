@@ -1,0 +1,122 @@
+name: Publish static mirror release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag. Leave empty for salamah-assets-YYYYMMDD.
+        required: false
+        type: string
+      source_release_tag:
+        description: Existing release to copy mirrored assets from.
+        required: true
+        default: salamah-assets-20260507-v2
+        type: string
+      salamah_ref:
+        description: Salamah ref containing the bundled Quran topic database.
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-static-mirror-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout release repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Salamah source
+        uses: actions/checkout@v4
+        with:
+          repository: abdessalllam/Salamah
+          ref: ${{ inputs.salamah_ref }}
+          path: salamah-source
+
+      - name: Resolve release inputs
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          SALAMAH_REF_INPUT: ${{ inputs.salamah_ref }}
+          SOURCE_RELEASE_TAG_INPUT: ${{ inputs.source_release_tag }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-salamah-assets-$(date -u +%Y%m%d)}"
+          echo "RELEASE_TAG=${tag}" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=Salamah assets ${tag#salamah-assets-}" >> "$GITHUB_ENV"
+          echo "SALAMAH_REF=${SALAMAH_REF_INPUT}" >> "$GITHUB_ENV"
+          echo "SOURCE_RELEASE_TAG=${SOURCE_RELEASE_TAG_INPUT}" >> "$GITHUB_ENV"
+          echo "SALAMAH_SHA=$(git -C salamah-source rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Download previous release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists."
+            exit 1
+          fi
+          mkdir -p previous-release mirror/release-assets
+          gh release download "$SOURCE_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir previous-release \
+            --clobber
+          test -f previous-release/manifest.json
+          find previous-release -maxdepth 1 -type f \
+            ! -name manifest.json \
+            ! -name urls.tsv \
+            -exec cp {} mirror/release-assets/ \;
+
+      - name: Build release manifest
+        env:
+          SALAMAH_SOURCE_PATH: salamah-source
+        run: |
+          set -euo pipefail
+          node .github/scripts/build-static-mirror-release.mjs \
+            previous-release/manifest.json \
+            mirror/release-assets \
+            mirror
+          jq '{generatedAt, sourceReleaseTag, salamahSha, countsByGroup, missingAssetCount}' mirror/manifest.json
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > mirror/release-notes.md <<EOF
+          Static Salamah asset mirror built by GitHub Actions.
+
+          Source release copied: ${SOURCE_RELEASE_TAG}
+          Salamah ref: ${SALAMAH_REF}
+          Salamah commit: ${SALAMAH_SHA}
+
+          New file included:
+          - quran__topics__qurantopics.db
+
+          Known upstream missing files remain listed in manifest.json.
+          EOF
+          gh release create "$RELEASE_TAG" \
+            mirror/manifest.json \
+            mirror/urls.tsv \
+            mirror/release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_TITLE" \
+            --notes-file mirror/release-notes.md \
+            --latest
+
+      - name: Summarize release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isLatest,publishedAt,url \
+            --jq '{tagName,isLatest,publishedAt,url}'
