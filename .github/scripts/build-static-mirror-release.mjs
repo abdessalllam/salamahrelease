@@ -16,24 +16,33 @@ const salamahSourcePath = process.env.SALAMAH_SOURCE_PATH || 'salamah-source';
 const salamahRef = process.env.SALAMAH_REF || '';
 const salamahSha = process.env.SALAMAH_SHA || '';
 const sourceReleaseTag = process.env.SOURCE_RELEASE_TAG || '';
-const topicSourceRelativePath = 'composeApp/src/androidMain/assets/quran/qurantopics.db';
-const topicSourcePath = path.join(salamahSourcePath, topicSourceRelativePath);
-const topicReleaseAssetName = 'quran__topics__qurantopics.db';
-const topicOutputPath = 'quran/topics/qurantopics.db';
+const topicSourceRelativeDirectory = 'composeApp/src/androidMain/assets/quran';
+const topicSourceDirectory = path.join(salamahSourcePath, topicSourceRelativeDirectory);
+const topicDatabaseFilePattern = /^qurantopics(?:_[a-z0-9-]+)?\.db$/i;
 const releaseBaseUrl = `https://github.com/${githubRepository}/releases/download/${encodeURIComponent(releaseTag)}`;
 
 await mkdir(releaseAssetsDirectory, { recursive: true });
 await mkdir(outputDirectory, { recursive: true });
-await copyFile(topicSourcePath, path.join(releaseAssetsDirectory, topicReleaseAssetName));
+
+const topicDatabaseFileNames = (await readdir(topicSourceDirectory))
+  .filter((fileName) => topicDatabaseFilePattern.test(fileName))
+  .sort();
+
+if (topicDatabaseFileNames.length === 0) {
+  throw new Error(`No Quran topic databases found in ${topicSourceRelativeDirectory}.`);
+}
+
+for (const fileName of topicDatabaseFileNames) {
+  await copyFile(
+    path.join(topicSourceDirectory, fileName),
+    path.join(releaseAssetsDirectory, topicReleaseAssetName(fileName)),
+  );
+}
 
 const previousManifest = JSON.parse(await readFile(previousManifestPath, 'utf8'));
 const assetFileNames = new Set(await readdir(releaseAssetsDirectory));
 const previousAssets = Array.isArray(previousManifest.assets) ? previousManifest.assets : [];
-const retainedAssets = previousAssets.filter((asset) => (
-  asset.id !== 'quran-topics-qurantopics' &&
-  asset.outputPath !== topicOutputPath &&
-  asset.releaseAssetName !== topicReleaseAssetName
-));
+const retainedAssets = previousAssets.filter((asset) => !isQuranTopicAsset(asset));
 
 const assets = [];
 for (const asset of retainedAssets) {
@@ -64,21 +73,29 @@ for (const asset of retainedAssets) {
   });
 }
 
-const topicMetadata = await fileDigest(path.join(releaseAssetsDirectory, topicReleaseAssetName));
-const topicDownloadUrl = `${releaseBaseUrl}/${encodeURIComponent(topicReleaseAssetName)}`;
-assets.push({
-  id: 'quran-topics-qurantopics',
-  kind: 'quran-topics-database',
-  group: 'quran-topics',
-  sourceUrl: `local://${topicSourceRelativePath}`,
-  outputPath: topicOutputPath,
-  mirroredUrl: topicDownloadUrl,
-  bytes: topicMetadata.bytes,
-  sha256: topicMetadata.sha256,
-  releaseAssetName: topicReleaseAssetName,
-  releaseDownloadUrl: topicDownloadUrl,
-  languageCodes: ['en', 'ar'],
-});
+for (const fileName of topicDatabaseFileNames) {
+  const releaseAssetName = topicReleaseAssetName(fileName);
+  const sourceRelativePath = `${topicSourceRelativeDirectory}/${fileName}`;
+  const outputPath = `quran/topics/${fileName}`;
+  const topicMetadata = await fileDigest(path.join(releaseAssetsDirectory, releaseAssetName));
+  const topicDownloadUrl = `${releaseBaseUrl}/${encodeURIComponent(releaseAssetName)}`;
+  assets.push({
+    id: `quran-topics-${safePathPart(fileName.replace(/\.db$/i, ''))}`,
+    kind: 'quran-topics-database',
+    group: 'quran-topics',
+    sourceUrl: `local://${sourceRelativePath}`,
+    outputPath,
+    mirroredUrl: topicDownloadUrl,
+    bytes: topicMetadata.bytes,
+    sha256: topicMetadata.sha256,
+    releaseAssetName,
+    releaseDownloadUrl: topicDownloadUrl,
+    metadata: {
+      localSourcePath: sourceRelativePath,
+      languageCodes: topicLanguageCodes(fileName),
+    },
+  });
+}
 
 const releaseAssets = assets
   .filter((asset) => !isMissingAsset(asset))
@@ -146,6 +163,32 @@ function releaseAssetNameForOutputPath(outputPath) {
     throw new Error('Cannot derive a release asset name without outputPath');
   }
   return outputPath.split(/[\\/]+/).filter(Boolean).join('__');
+}
+
+function topicReleaseAssetName(fileName) {
+  return `quran__topics__${fileName}`;
+}
+
+function topicLanguageCodes(fileName) {
+  const languageMatch = fileName.match(/^qurantopics_([a-z0-9-]+)\.db$/i);
+  return languageMatch ? [languageMatch[1].toLowerCase()] : ['en', 'ar'];
+}
+
+function isQuranTopicAsset(asset) {
+  const id = asset.id || '';
+  const kind = asset.kind || '';
+  const group = asset.group || '';
+  const outputPath = asset.outputPath || '';
+  const releaseAssetName = asset.releaseAssetName || '';
+  return group === 'quran-topics' ||
+    kind === 'quran-topics-database' ||
+    /^quran-topics-qurantopics(?:_[a-z0-9-]+)?$/i.test(id) ||
+    /^quran\/topics\/qurantopics(?:_[a-z0-9-]+)?\.db$/i.test(outputPath) ||
+    /^quran__topics__qurantopics(?:_[a-z0-9-]+)?\.db$/i.test(releaseAssetName);
+}
+
+function safePathPart(value) {
+  return value.trim().replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'asset';
 }
 
 async function fileDigest(filePath) {

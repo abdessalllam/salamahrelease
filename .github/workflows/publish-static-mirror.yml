@@ -10,10 +10,10 @@ on:
       source_release_tag:
         description: Existing release to copy mirrored assets from.
         required: true
-        default: salamah-assets-20260507-v2
+        default: salamah-assets-20260510
         type: string
       salamah_ref:
-        description: Salamah ref containing the bundled Quran topic database.
+        description: Salamah ref containing the bundled Quran topic databases.
         required: true
         default: main
         type: string
@@ -94,6 +94,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          topic_count="$(jq '[.assets[] | select(.group == "quran-topics")] | length' mirror/manifest.json)"
+          topic_files="$(jq -r '.assets[] | select(.group == "quran-topics") | "- " + .releaseAssetName' mirror/manifest.json | sort)"
           cat > mirror/release-notes.md <<EOF
           Static Salamah asset mirror built by GitHub Actions.
 
@@ -101,8 +103,8 @@ jobs:
           Salamah ref: ${SALAMAH_REF}
           Salamah commit: ${SALAMAH_SHA}
 
-          New file included:
-          - quran__topics__qurantopics.db
+          Quran topic database files included (${topic_count}):
+          ${topic_files}
 
           Known upstream missing files remain listed in manifest.json.
           EOF
