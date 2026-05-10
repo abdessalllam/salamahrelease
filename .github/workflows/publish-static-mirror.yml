@@ -122,5 +122,5 @@ jobs:
           set -euo pipefail
           gh release view "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --json tagName,isLatest,publishedAt,url \
-            --jq '{tagName,isLatest,publishedAt,url}'
+            --json tagName,publishedAt,url,assets \
+            --jq '{tagName,publishedAt,url,assetCount:(.assets | length)}'
