@@ -31,13 +31,17 @@ jobs:
 
     steps:
       - name: Checkout release repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Checkout Salamah source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: abdessalllam/Salamah
           ref: ${{ inputs.salamah_ref }}
+          token: ${{ secrets.SALAMAH_SOURCE_TOKEN }}
+          persist-credentials: false
           path: salamah-source
 
       - name: Resolve release inputs

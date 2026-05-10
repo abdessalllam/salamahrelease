@@ -9,3 +9,7 @@ Manual dispatch inputs:
 - `tag`: release tag to create, such as `salamah-assets-20260510`. If left empty, the workflow uses the current UTC date.
 - `source_release_tag`: existing release to copy current mirror payloads from.
 - `salamah_ref`: Salamah branch, tag, or commit containing the bundled topic database.
+
+Required repository secret:
+
+- `SALAMAH_SOURCE_TOKEN`: token with read access to the private Salamah source repository.
