@@ -1,0 +1,259 @@
+name: Copy matching release assets to draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_release_tag:
+        description: Existing release tag that contains the source assets.
+        required: true
+        type: string
+      target_release_id:
+        description: Numeric ID of the destination draft release.
+        required: true
+        type: string
+      plan_asset_name:
+        description: JSON copy-plan asset attached to the destination draft.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: copy-release-assets-${{ inputs.target_release_id }}
+  cancel-in-progress: false
+
+jobs:
+  copy:
+    name: Copy verified assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Copy assets into destination draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_ASSET_NAME: ${{ inputs.plan_asset_name }}
+          SOURCE_RELEASE_TAG: ${{ inputs.source_release_tag }}
+          TARGET_RELEASE_ID: ${{ inputs.target_release_id }}
+        run: |
+          set -Eeuo pipefail
+
+          repo="${GITHUB_REPOSITORY}"
+          if [[ ! "${TARGET_RELEASE_ID}" =~ ^[0-9]+$ ]]; then
+            echo "target_release_id must be numeric" >&2
+            exit 2
+          fi
+
+          target_json="$(gh api "repos/${repo}/releases/${TARGET_RELEASE_ID}")"
+          target_tag="$(jq -r '.tag_name' <<<"${target_json}")"
+          if [[ "$(jq -r '.draft' <<<"${target_json}")" != "true" ]]; then
+            echo "destination release must remain a draft" >&2
+            exit 2
+          fi
+
+          gh api --paginate --slurp \
+            "repos/${repo}/releases/${TARGET_RELEASE_ID}/assets?per_page=100" \
+            | jq '[.[][]]' > target-assets.json
+
+          plan_count="$(
+            jq --arg name "${PLAN_ASSET_NAME}" \
+              '[.[] | select(.name == $name)] | length' \
+              target-assets.json
+          )"
+          if [[ "${plan_count}" != "1" ]]; then
+            echo "expected exactly one copy-plan asset, found ${plan_count}" >&2
+            exit 2
+          fi
+          plan_asset_id="$(
+            jq -r --arg name "${PLAN_ASSET_NAME}" \
+              '.[] | select(.name == $name) | .id' \
+              target-assets.json
+          )"
+          gh api \
+            --header 'Accept: application/octet-stream' \
+            "repos/${repo}/releases/assets/${plan_asset_id}" > copy-plan.json
+
+          jq -e \
+            --arg source "${SOURCE_RELEASE_TAG}" \
+            --argjson target "${TARGET_RELEASE_ID}" \
+            '
+              .schemaVersion == 1
+              and .sourceReleaseTag == $source
+              and .targetReleaseId == $target
+              and (.assets | type == "array" and length > 0)
+              and all(
+                .assets[];
+                (.name | type == "string" and length > 0)
+                and .name != "."
+                and .name != ".."
+                and (.name | contains("/") | not)
+                and (.name | contains("\\") | not)
+                and (.name | explode | all(. >= 32 and . != 127))
+                and (.size | type == "number" and . >= 0 and floor == .)
+                and (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+              )
+              and ([.assets[].name] | length == (unique | length))
+            ' \
+            copy-plan.json >/dev/null
+
+          source_tag_encoded="$(
+            jq -rn --arg value "${SOURCE_RELEASE_TAG}" '$value | @uri'
+          )"
+          source_json="$(
+            gh api "repos/${repo}/releases/tags/${source_tag_encoded}"
+          )"
+          source_release_id="$(jq -r '.id' <<<"${source_json}")"
+          if [[ ! "${source_release_id}" =~ ^[0-9]+$ ]]; then
+            echo "source release did not resolve to a numeric id" >&2
+            exit 2
+          fi
+          gh api --paginate --slurp \
+            "repos/${repo}/releases/${source_release_id}/assets?per_page=100" \
+            | jq '[.[][]]' > source-assets.json
+
+          mkdir source-assets
+          while IFS=$'\t' read -r name expected_size expected_sha256; do
+            matches="$(
+              jq \
+                --arg name "${name}" \
+                --argjson size "${expected_size}" \
+                --arg digest "sha256:${expected_sha256}" \
+                '[
+                  .[]
+                  | select(
+                      .name == $name
+                      and .state == "uploaded"
+                      and .size == $size
+                      and .digest == $digest
+                    )
+                ] | length' \
+                source-assets.json
+            )"
+            if [[ "${matches}" != "1" ]]; then
+              echo "source release is missing a verified asset: ${name}" >&2
+              exit 3
+            fi
+            source_asset_id="$(
+              jq -r --arg name "${name}" \
+                '.[] | select(.name == $name) | .id' \
+                source-assets.json
+            )"
+            if [[ ! "${source_asset_id}" =~ ^[0-9]+$ ]]; then
+              echo "source asset did not resolve to a numeric id: ${name}" >&2
+              exit 3
+            fi
+            gh api \
+              --header 'Accept: application/octet-stream' \
+              "repos/${repo}/releases/assets/${source_asset_id}" \
+              > "source-assets/${name}"
+          done < <(
+            jq -r \
+              '.assets[] | [.name, (.size | tostring), .sha256] | @tsv' \
+              copy-plan.json
+          )
+
+          declare -a pending=()
+          already_present=0
+          planned=0
+
+          flush_pending() {
+            if ((${#pending[@]} == 0)); then
+              return
+            fi
+            gh release upload "${target_tag}" \
+              --repo "${repo}" \
+              "${pending[@]}"
+            pending=()
+          }
+
+          while IFS=$'\t' read -r name expected_size expected_sha256; do
+            planned=$((planned + 1))
+            source_path="source-assets/${name}"
+            if [[ ! -f "${source_path}" || -L "${source_path}" ]]; then
+              echo "source release asset is missing or unsafe: ${name}" >&2
+              exit 3
+            fi
+
+            actual_size="$(stat -c '%s' "${source_path}")"
+            actual_sha256="$(sha256sum "${source_path}" | cut -d' ' -f1)"
+            if [[ "${actual_size}" != "${expected_size}" ]]; then
+              echo "source release asset size mismatch: ${name}" >&2
+              exit 3
+            fi
+            if [[ "${actual_sha256}" != "${expected_sha256}" ]]; then
+              echo "source release asset checksum mismatch: ${name}" >&2
+              exit 3
+            fi
+
+            existing="$(
+              jq -r --arg name "${name}" \
+                '.[] | select(.name == $name) | [.state, .size, .digest] | @tsv' \
+                target-assets.json
+            )"
+            if [[ -n "${existing}" ]]; then
+              IFS=$'\t' read -r state remote_size remote_digest <<<"${existing}"
+              if [[
+                "${state}" != "uploaded"
+                || "${remote_size}" != "${expected_size}"
+                || "${remote_digest}" != "sha256:${expected_sha256}"
+              ]]; then
+                echo "destination release has a conflicting asset: ${name}" >&2
+                exit 3
+              fi
+              already_present=$((already_present + 1))
+              continue
+            fi
+
+            pending+=("${source_path}")
+            if ((${#pending[@]} >= 20)); then
+              flush_pending
+            fi
+          done < <(
+            jq -r \
+              '.assets[] | [.name, (.size | tostring), .sha256] | @tsv' \
+              copy-plan.json
+          )
+          flush_pending
+
+          gh api --paginate --slurp \
+            "repos/${repo}/releases/${TARGET_RELEASE_ID}/assets?per_page=100" \
+            | jq '[.[][]]' > final-assets.json
+
+          while IFS=$'\t' read -r name expected_size expected_sha256; do
+            matches="$(
+              jq \
+                --arg name "${name}" \
+                --argjson size "${expected_size}" \
+                --arg digest "sha256:${expected_sha256}" \
+                '[
+                  .[]
+                  | select(
+                      .name == $name
+                      and .state == "uploaded"
+                      and .size == $size
+                      and .digest == $digest
+                    )
+                ] | length' \
+                final-assets.json
+            )"
+            if [[ "${matches}" != "1" ]]; then
+              echo "destination verification failed: ${name}" >&2
+              exit 4
+            fi
+          done < <(
+            jq -r \
+              '.assets[] | [.name, (.size | tostring), .sha256] | @tsv' \
+              copy-plan.json
+          )
+
+          gh api --method DELETE \
+            "repos/${repo}/releases/assets/${plan_asset_id}"
+
+          {
+            echo "### Draft asset copy complete"
+            echo
+            echo "- Planned assets: ${planned}"
+            echo "- Already present: ${already_present}"
+            echo "- Destination remained a draft"
+          } >> "${GITHUB_STEP_SUMMARY}"
