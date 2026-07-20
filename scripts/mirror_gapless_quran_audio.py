@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import ssl
 import subprocess
 import sys
 import time
@@ -197,8 +198,28 @@ def audio_file_name(number: int) -> str:
     return f"{number:03d}.mp3"
 
 
+def verified_ssl_context() -> ssl.SSLContext:
+    default_paths = ssl.get_default_verify_paths()
+    if default_paths.cafile and Path(default_paths.cafile).is_file():
+        return ssl.create_default_context()
+    for ca_file in (
+        Path("/etc/ssl/cert.pem"),
+        Path("/etc/ssl/certs/ca-certificates.crt"),
+    ):
+        if ca_file.is_file():
+            return ssl.create_default_context(cafile=str(ca_file))
+    return ssl.create_default_context()
+
+
+VERIFIED_SSL_CONTEXT = verified_ssl_context()
+
+
 def default_request(request: urllib.request.Request, timeout: int) -> Any:
-    return urllib.request.urlopen(request, timeout=timeout)
+    return urllib.request.urlopen(
+        request,
+        timeout=timeout,
+        context=VERIFIED_SSL_CONTEXT,
+    )
 
 
 def audit_pack(

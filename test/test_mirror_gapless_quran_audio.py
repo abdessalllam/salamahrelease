@@ -54,6 +54,23 @@ class TruncatedResponse(FakeResponse):
 
 
 class GaplessQuranAudioMirrorTests(unittest.TestCase):
+    def test_default_request_keeps_certificate_and_hostname_verification_enabled(
+        self,
+    ) -> None:
+        request = mirror.urllib.request.Request("https://audio.example/001.mp3")
+        response = object()
+
+        with mock.patch.object(
+            mirror.urllib.request,
+            "urlopen",
+            return_value=response,
+        ) as urlopen:
+            self.assertIs(response, mirror.default_request(request, 30))
+
+        context = urlopen.call_args.kwargs["context"]
+        self.assertEqual(mirror.ssl.CERT_REQUIRED, context.verify_mode)
+        self.assertTrue(context.check_hostname)
+
     def test_repository_catalog_has_40_complete_timing_backed_packs(self) -> None:
         packs = mirror.load_catalog(
             Path(__file__).resolve().parents[1]
