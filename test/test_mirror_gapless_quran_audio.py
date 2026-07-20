@@ -290,6 +290,76 @@ class GaplessQuranAudioMirrorTests(unittest.TestCase):
         self.assertIn("--clobber", command)
         self.assertIn(str(asset), command)
 
+    def test_github_publish_accepts_exact_asset_after_upload_command_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            asset = Path(directory) / "audio.zip"
+            asset.write_bytes(b"archive")
+            expected = mirror.file_digest(asset)
+            with (
+                mock.patch.object(
+                    mirror,
+                    "resolve_github_release",
+                    return_value="release-tag",
+                ),
+                mock.patch.object(
+                    mirror,
+                    "github_asset_metadata",
+                    side_effect=[
+                        {},
+                        {asset.name: expected},
+                        {asset.name: expected},
+                    ],
+                ),
+                mock.patch.object(
+                    mirror.subprocess,
+                    "run",
+                    side_effect=mirror.subprocess.CalledProcessError(
+                        returncode=1,
+                        cmd=["gh", "release", "upload"],
+                    ),
+                ),
+            ):
+                mirror.publish_github(
+                    [asset],
+                    repository="owner/repository",
+                    release="latest",
+                )
+
+    def test_github_publish_rejects_mismatched_asset_after_command_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            asset = Path(directory) / "audio.zip"
+            asset.write_bytes(b"archive")
+            expected = mirror.file_digest(asset)
+            with (
+                mock.patch.object(
+                    mirror,
+                    "resolve_github_release",
+                    return_value="release-tag",
+                ),
+                mock.patch.object(
+                    mirror,
+                    "github_asset_metadata",
+                    side_effect=[
+                        {},
+                        {asset.name: (expected[0], "0" * 64)},
+                    ],
+                ),
+                mock.patch.object(
+                    mirror.subprocess,
+                    "run",
+                    side_effect=mirror.subprocess.CalledProcessError(
+                        returncode=1,
+                        cmd=["gh", "release", "upload"],
+                    ),
+                ),
+            ):
+                with self.assertRaises(mirror.subprocess.CalledProcessError):
+                    mirror.publish_github(
+                        [asset],
+                        repository="owner/repository",
+                        release="latest",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

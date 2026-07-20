@@ -565,19 +565,23 @@ def publish_github(
     for file in files:
         if existing.get(file.name) == local[file.name]:
             continue
-        subprocess.run(
-            [
-                "gh",
-                "release",
-                "upload",
-                tag,
-                str(file),
-                "--repo",
-                repository,
-                "--clobber",
-            ],
-            check=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    "gh",
+                    "release",
+                    "upload",
+                    tag,
+                    str(file),
+                    "--repo",
+                    repository,
+                    "--clobber",
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            if github_asset_metadata(repository, tag).get(file.name) != local[file.name]:
+                raise
     verified = github_asset_metadata(repository, tag)
     mismatches = [
         file.name
