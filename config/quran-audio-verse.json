@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "fileCount": 6236,
+  "archiveTotalBytes": 50383002352,
+  "packs": [
+    {
+      "packId": "4",
+      "pathSlug": "abdul_basit_murattal_192kbps",
+      "sourcePath": "Abdul_Basit_Murattal_192kbps",
+      "archiveBytes": 2703478666
+    },
+    {
+      "packId": "5",
+      "pathSlug": "abdul_basit_mujawwad_128kbps",
+      "sourcePath": "Abdul_Basit_Mujawwad_128kbps",
+      "archiveBytes": 3393386669
+    },
+    {
+      "packId": "6",
+      "pathSlug": "abdullah_basfar_192kbps",
+      "sourcePath": "Abdullah_Basfar_192kbps",
+      "archiveBytes": 2581600489
+    },
+    {
+      "packId": "7",
+      "pathSlug": "abdurrahmaan_as_sudais_192kbps",
+      "sourcePath": "Abdurrahmaan_As-Sudais_192kbps",
+      "archiveBytes": 1825309440
+    },
+    {
+      "packId": "8",
+      "pathSlug": "abu_bakr_ash_shaatree_128kbps",
+      "sourcePath": "Abu_Bakr_Ash-Shaatree_128kbps",
+      "archiveBytes": 1431225194
+    },
+    {
+      "packId": "9",
+      "pathSlug": "alafasy_128kbps",
+      "sourcePath": "Alafasy_128kbps",
+      "archiveBytes": 1707811817
+    },
+    {
+      "packId": "10",
+      "pathSlug": "ghamadi_40kbps",
+      "sourcePath": "Ghamadi_40kbps",
+      "archiveBytes": 446662812
+    },
+    {
+      "packId": "11",
+      "pathSlug": "sahih_intnl_ibrahim_walk_192kbps",
+      "sourcePath": "English/Sahih_Intnl_Ibrahim_Walk_192kbps",
+      "archiveBytes": 1566047236
+    },
+    {
+      "packId": "12",
+      "pathSlug": "hani_rifai_192kbps",
+      "sourcePath": "Hani_Rifai_192kbps",
+      "archiveBytes": 2154664127
+    },
+    {
+      "packId": "13",
+      "pathSlug": "husary_mujawwad_128kbps",
+      "sourcePath": "Husary_128kbps_Mujawwad",
+      "archiveBytes": 3504730078
+    },
+    {
+      "packId": "14",
+      "pathSlug": "hudhaify_128kbps",
+      "sourcePath": "Hudhaify_128kbps",
+      "archiveBytes": 1733755052
+    },
+    {
+      "packId": "15",
+      "pathSlug": "maher_almuaiqly_64kbps",
+      "sourcePath": "Maher_AlMuaiqly_64kbps",
+      "archiveBytes": 614339401
+    },
+    {
+      "packId": "16",
+      "pathSlug": "minshawy_mujawwad_192kbps",
+      "sourcePath": "Minshawy_Mujawwad_192kbps",
+      "archiveBytes": 4930288955
+    },
+    {
+      "packId": "17",
+      "pathSlug": "mohammad_al_tablaway_128kbps",
+      "sourcePath": "Mohammad_al_Tablaway_128kbps",
+      "archiveBytes": 1717868041
+    },
+    {
+      "packId": "18",
+      "pathSlug": "muhammad_ayyoub_128kbps",
+      "sourcePath": "Muhammad_Ayyoub_128kbps",
+      "archiveBytes": 1859536305
+    },
+    {
+      "packId": "19",
+      "pathSlug": "muhammad_jibreel_128kbps",
+      "sourcePath": "Muhammad_Jibreel_128kbps",
+      "archiveBytes": 1500630322
+    },
+    {
+      "packId": "20",
+      "pathSlug": "saood_ash_shuraym_128kbps",
+      "sourcePath": "Saood_ash-Shuraym_128kbps",
+      "archiveBytes": 1055115403
+    },
+    {
+      "packId": "21",
+      "pathSlug": "yasser_ad_dussary_128kbps",
+      "sourcePath": "Yasser_Ad-Dussary_128kbps",
+      "archiveBytes": 1503371701
+    },
+    {
+      "packId": "34",
+      "pathSlug": "husary_muallim_128kbps",
+      "sourcePath": "Husary_Muallim_128kbps",
+      "archiveBytes": 2754114993
+    },
+    {
+      "packId": "35",
+      "pathSlug": "basfar_walk_192kbps",
+      "sourcePath": "MultiLanguage/Basfar_Walk_192kbps",
+      "archiveBytes": 4131038357
+    },
+    {
+      "packId": "36",
+      "pathSlug": "urdu_farhat_hashmi",
+      "sourcePath": "translations/urdu_farhat_hashmi",
+      "archiveBytes": 1504160846
+    },
+    {
+      "packId": "37",
+      "pathSlug": "urdu_shamshad_ali_khan_46kbps",
+      "sourcePath": "translations/urdu_shamshad_ali_khan_46kbps",
+      "archiveBytes": 509434767
+    },
+    {
+      "packId": "42",
+      "pathSlug": "ayman_sowaid_64kbps",
+      "sourcePath": "Ayman_Sowaid_64kbps",
+      "archiveBytes": null
+    },
+    {
+      "packId": "43",
+      "pathSlug": "abdullah_matroud_128kbps",
+      "sourcePath": "Abdullah_Matroud_128kbps",
+      "archiveBytes": 1626070096
+    },
+    {
+      "packId": "44",
+      "pathSlug": "ahmed_ibn_ali_al_ajamy_128kbps",
+      "sourcePath": "ahmed_ibn_ali_al_ajamy_128kbps",
+      "archiveBytes": 1506167344
+    },
+    {
+      "packId": "45",
+      "pathSlug": "salaah_bukhatir_128kbps",
+      "sourcePath": "Salaah_AbdulRahman_Bukhatir_128kbps",
+      "archiveBytes": 1387627361
+    },
+    {
+      "packId": "46",
+      "pathSlug": "ali_jaber_64kbps",
+      "sourcePath": "Ali_Jaber_64kbps",
+      "archiveBytes": 734566880
+    }
+  ]
+}

@@ -43,6 +43,37 @@ ZIP parts below 1.9 GB and a checksum manifest are uploaded to the latest
 GitHub release. Completed staging files are removed unless `--keep-stage` is
 set. Existing matching B2 objects and GitHub assets are skipped on reruns.
 
+## Verse-by-Verse Quran Audio
+
+The verse audio catalog in `config/quran-audio-verse.json` tracks the 27
+verse-by-verse packs exposed by the app. It is based on the official
+[EveryAyah recitation catalog](https://everyayah.com/recitations_ayat.html) and
+contains the measured full-archive size for each available pack.
+
+Audit all 168,372 required direct MP3 paths and the 26 available source
+archives without downloading an archive:
+
+```bash
+python3 scripts/mirror_verse_quran_audio.py --audit-only
+```
+
+Stage and package one reciter:
+
+```bash
+python3 scripts/mirror_verse_quran_audio.py \
+  --pack ghamadi_40kbps \
+  --stage-only
+```
+
+Publication uses the same private B2 environment variables as the gapless
+pipeline. Each pack is processed independently. The source ZIP is resumable,
+validated, and removed after extraction to keep peak disk use bounded. Exactly
+6,236 canonical ayah files are uploaded under
+`release-assets/quran/audio/verse/<EveryAyah-source-path>/`; extra chapter-level
+audio files are ignored. GitHub receives deterministic stored ZIP parts below
+1.9 GB plus a SHA-256 manifest. Ayman Sowaid is downloaded from its individual
+ayah files because EveryAyah does not publish its full archive.
+
 ## Public B2 Library
 
 The Salamah Library release contains four schema-v2 SQLite objects for every
