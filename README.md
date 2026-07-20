@@ -78,8 +78,16 @@ Once the GitHub recovery archives are complete, publish only the direct B2
 objects without rebuilding those archives:
 
 ```bash
-python3 scripts/mirror_verse_quran_audio.py --skip-github &&
-python3 scripts/mirror_gapless_quran_audio.py --skip-github
+python3 scripts/mirror_verse_quran_audio.py \
+  --skip-github \
+  --download-workers 2 \
+  --audit-workers 2 \
+  --retries 12 &&
+python3 scripts/mirror_gapless_quran_audio.py \
+  --skip-github \
+  --download-workers 2 \
+  --audit-workers 2 \
+  --retries 12
 ```
 
 Both commands read the private B2 credentials and bucket name from the
