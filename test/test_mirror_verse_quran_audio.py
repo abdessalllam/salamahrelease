@@ -332,6 +332,100 @@ class VerseQuranAudioMirrorTests(unittest.TestCase):
         )
         self.assertFalse(any("APPLICATION_KEY" in part for part in command))
 
+    def test_b2_only_manifest_does_not_require_github_archives(self) -> None:
+        pack = mirror.VersePack(
+            pack_id="1",
+            path_slug="test",
+            source_path="translations/Test_Reciter",
+            archive_bytes=1,
+            file_count=1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            direct = Path(directory) / "direct"
+            direct.mkdir()
+            audio_path = direct / "001001.mp3"
+            audio_path.write_bytes(b"audio")
+            local_file = mirror.common.LocalAudioFile(
+                name=audio_path.name,
+                path=audio_path,
+                source_url="https://example.com/001001.mp3",
+                final_url="https://example.com/001001.mp3",
+                bytes=audio_path.stat().st_size,
+                sha256=mirror.common.file_digest(audio_path)[1],
+            )
+
+            release_manifest = mirror.write_pack_manifest(
+                pack,
+                [local_file],
+                source_archive=None,
+                archives=(),
+                direct_directory=direct,
+                archive_directory=None,
+                b2_prefix="release-assets/quran/audio/verse",
+            )
+            payload = json.loads((direct / "manifest.json").read_text())
+
+        self.assertIsNone(release_manifest)
+        self.assertEqual([], payload["archives"])
+        self.assertEqual(1, payload["fileCount"])
+
+    def test_b2_only_main_skips_github_archive_packaging(self) -> None:
+        pack = mirror.VersePack(
+            pack_id="1",
+            path_slug="test",
+            source_path="translations/Test_Reciter",
+            archive_bytes=1,
+            file_count=1,
+        )
+        local_file = mirror.common.LocalAudioFile(
+            name="001001.mp3",
+            path=Path("/temporary/direct/001001.mp3"),
+            source_url="https://example.com/001001.mp3",
+            final_url="https://example.com/001001.mp3",
+            bytes=5,
+            sha256="0" * 64,
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(mirror, "load_catalog", return_value=(pack,)),
+            mock.patch.object(mirror, "audit_pack", return_value={}),
+            mock.patch.object(mirror, "write_json"),
+            mock.patch.object(
+                mirror,
+                "stage_pack",
+                return_value=((local_file,), None),
+            ),
+            mock.patch.object(
+                mirror,
+                "require_free_disk_space",
+            ) as require_free_disk_space,
+            mock.patch.object(mirror, "build_archives") as build_archives,
+            mock.patch.object(
+                mirror,
+                "write_pack_manifest",
+                return_value=None,
+            ) as write_pack_manifest,
+            mock.patch.object(mirror, "publish_b2") as publish_b2,
+            mock.patch.object(mirror.common, "publish_github") as publish_github,
+        ):
+            result = mirror.main(
+                [
+                    "--work-dir",
+                    directory,
+                    "--b2-bucket",
+                    "public-bucket",
+                    "--skip-github",
+                    "--keep-stage",
+                ]
+            )
+
+        self.assertEqual(0, result)
+        require_free_disk_space.assert_not_called()
+        build_archives.assert_not_called()
+        self.assertIsNone(write_pack_manifest.call_args.args[5])
+        publish_b2.assert_called_once()
+        publish_github.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

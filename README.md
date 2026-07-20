@@ -74,6 +74,19 @@ audio files are ignored. GitHub receives deterministic stored ZIP parts below
 1.9 GB plus a SHA-256 manifest. Ayman Sowaid is downloaded from its individual
 ayah files because EveryAyah does not publish its full archive.
 
+Once the GitHub recovery archives are complete, publish only the direct B2
+objects without rebuilding those archives:
+
+```bash
+python3 scripts/mirror_verse_quran_audio.py --skip-github &&
+python3 scripts/mirror_gapless_quran_audio.py --skip-github
+```
+
+Both commands read the private B2 credentials and bucket name from the
+environment. B2-only mode still validates every source file and writes a
+per-pack direct manifest, but it skips GitHub ZIP creation and its extra disk
+space requirement.
+
 ## Public B2 Library
 
 The Salamah Library release contains four schema-v2 SQLite objects for every
@@ -120,3 +133,10 @@ Upload the contents of `release-assets/` with their relative paths preserved.
 Use the content types and immutable cache header in `upload.tsv`. Never replace
 objects in an existing version prefix; publish a new prefix and update the
 app's static mirror base URL.
+
+The root static upload is an exact mirror. Run it before the Quran audio
+commands above. Do not run that 323-file root sync after direct audio is
+present: its source tree does not contain `quran/audio`, so exact mirroring at
+the `release-assets` root would delete those direct audio objects. The audio
+pipelines exact-mirror only their individual reciter prefixes and are safe to
+resume.

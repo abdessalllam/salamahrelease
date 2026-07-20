@@ -728,9 +728,9 @@ def write_pack_manifest(
     source_archive: SourceArchive | None,
     archives: Sequence[Mapping[str, Any]],
     direct_directory: Path,
-    archive_directory: Path,
+    archive_directory: Path | None,
     b2_prefix: str,
-) -> Path:
+) -> Path | None:
     object_prefix = f"{b2_prefix.strip('/')}/{pack.source_path}"
     payload = {
         "schemaVersion": 1,
@@ -770,6 +770,8 @@ def write_pack_manifest(
     text = f"{json.dumps(payload, indent=2, ensure_ascii=False)}\n"
     direct_manifest = direct_directory / "manifest.json"
     direct_manifest.write_text(text, encoding="utf-8")
+    if archive_directory is None:
+        return None
     release_manifest = (
         archive_directory
         / f"quran__audio__verse__{pack.path_slug}__manifest.json"
@@ -833,18 +835,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 download_workers=arguments.download_workers,
                 retries=arguments.retries,
             )
-            require_free_disk_space(
-                pack_root,
-                sum(file.bytes for file in files) + DISK_HEADROOM_BYTES,
-                f"packaging {pack.path_slug}",
-            )
             direct_directory = pack_root / "direct"
             archive_directory = pack_root / "archives"
-            archives = build_archives(
-                pack,
-                files,
-                archive_directory,
-                arguments.max_archive_bytes,
+            should_package_github = arguments.stage_only or not arguments.skip_github
+            if should_package_github:
+                require_free_disk_space(
+                    pack_root,
+                    sum(file.bytes for file in files) + DISK_HEADROOM_BYTES,
+                    f"packaging {pack.path_slug}",
+                )
+            archives = (
+                build_archives(
+                    pack,
+                    files,
+                    archive_directory,
+                    arguments.max_archive_bytes,
+                )
+                if should_package_github
+                else ()
             )
             release_manifest = write_pack_manifest(
                 pack,
@@ -852,7 +860,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source_archive,
                 archives,
                 direct_directory,
-                archive_directory,
+                archive_directory if should_package_github else None,
                 arguments.b2_prefix,
             )
             if arguments.stage_only:
@@ -866,6 +874,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     pack_root / "b2-state",
                 )
             if not arguments.skip_github:
+                if release_manifest is None:
+                    raise common.MirrorError("GitHub release manifest was not generated")
                 common.publish_github(
                     files=[
                         *(Path(archive["path"]) for archive in archives),
@@ -876,7 +886,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             if not arguments.keep_stage:
                 shutil.rmtree(direct_directory)
-                shutil.rmtree(archive_directory)
+                if archive_directory.exists():
+                    shutil.rmtree(archive_directory)
         return 0
     except (
         json.JSONDecodeError,
