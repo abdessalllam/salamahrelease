@@ -14,6 +14,35 @@ Required repository secret:
 
 - `SALAMAH_SOURCE_TOKEN`: token with read access to the private Salamah source repository.
 
+## Gapless Quran Audio
+
+The gapless audio mirror is processed one reciter at a time so the complete
+audio catalog never needs to fit on the build machine at once. The catalog in
+`config/quran-audio-gapless.json` contains only reciters with all 114 Surah
+files and a matching timing database.
+
+Audit every source without downloading audio:
+
+```bash
+python3 scripts/mirror_gapless_quran_audio.py --audit-only
+```
+
+Stage and package one reciter without uploading:
+
+```bash
+python3 scripts/mirror_gapless_quran_audio.py \
+  --pack mishari_alafasy \
+  --stage-only
+```
+
+For publication, expose `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`, and
+`B2_BUCKET_NAME` through private environment storage, then run the same command
+without `--stage-only`. Each reciter is uploaded as direct B2 MP3 objects under
+`release-assets/quran/audio/gapless/<path-slug>/`, while deterministic stored
+ZIP parts below 1.9 GB and a checksum manifest are uploaded to the latest
+GitHub release. Completed staging files are removed unless `--keep-stage` is
+set. Existing matching B2 objects and GitHub assets are skipped on reruns.
+
 ## Public B2 Library
 
 The Salamah Library release contains four schema-v2 SQLite objects for every
