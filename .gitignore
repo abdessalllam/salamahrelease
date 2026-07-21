@@ -17,3 +17,7 @@ quran/
 *.sqlite3
 *.db
 *.mp3
+/test
+README.md
+/config
+/scripts
