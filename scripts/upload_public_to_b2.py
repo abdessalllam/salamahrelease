@@ -39,7 +39,7 @@ import time
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
 
-SCRIPT_VERSION = "1.2.1"
+SCRIPT_VERSION = "1.3.0"
 MINIMUM_B2_VERSION = (4, 4, 0)
 LOCK_INITIALIZATION_GRACE_SECONDS = 30
 POST_EXIT_PIPE_GRACE_SECONDS = 0.5
@@ -822,6 +822,14 @@ Remote keys and older versions that are absent from the source are deleted.
             "with no unfinished uploads"
         ),
     )
+    mode.add_argument(
+        "--verify-state-only",
+        action="store_true",
+        help=(
+            "verify remote objects against the saved source manifest without "
+            "requiring the source files"
+        ),
+    )
     parser.add_argument(
         "--allow-private-bucket",
         action="store_true",
@@ -851,6 +859,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         bucket = arguments.bucket or ""
         if not arguments.plan:
             validate_bucket_name(bucket)
+        if arguments.verify_state_only and arguments.state_dir is None:
+            raise ValueError("--verify-state-only requires --state-dir")
 
         state_directory = resolve_state_directory(
             arguments.state_dir,
@@ -869,11 +879,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         with StateLock(state_directory):
-            logger.write(f"snapshotting source: {source}")
-            snapshot = snapshot_source(source, arguments.hash_workers)
-            write_json_atomic(
-                state_directory / "source-manifest.json", snapshot.to_json()
-            )
+            if arguments.verify_state_only:
+                manifest_path = state_directory / "source-manifest.json"
+                logger.write(f"loading saved source snapshot: {manifest_path}")
+                snapshot = load_source_snapshot(manifest_path)
+                source = snapshot.source
+                ensure_state_outside_source(state_directory, source)
+            else:
+                logger.write(f"snapshotting source: {source}")
+                snapshot = snapshot_source(source, arguments.hash_workers)
+                write_json_atomic(
+                    state_directory / "source-manifest.json", snapshot.to_json()
+                )
             logger.write(
                 f"source snapshot: {len(snapshot.files)} files, "
                 f"{snapshot.total_bytes} bytes, fingerprint={snapshot.fingerprint}"
@@ -910,12 +927,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     prefix=prefix,
                     upload_threads=arguments.upload_threads,
                     dry_run=arguments.dry_run,
-                    verify_only=arguments.verify_only,
+                    verify_only=(
+                        arguments.verify_only or arguments.verify_state_only
+                    ),
                     allow_private_bucket=arguments.allow_private_bucket,
                     logger=logger,
                 )
 
-            if not arguments.dry_run and not arguments.verify_only:
+            if (
+                not arguments.dry_run
+                and not arguments.verify_only
+                and not arguments.verify_state_only
+            ):
                 logger.write(
                     "re-inventorying source to confirm names and sizes did not change"
                 )
@@ -1267,6 +1290,77 @@ def snapshot_source(source: Path, workers: int) -> SourceSnapshot:
         files=tuple(records),
         total_bytes=sum(record.bytes for record in records),
         fingerprint=fingerprint_hash.hexdigest(),
+    )
+
+
+# Persisted snapshots are loaded here so batch publishers can verify a finished
+# remote prefix without retaining or rebuilding its multi-gigabyte source tree.
+def load_source_snapshot(path: Path) -> SourceSnapshot:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise UploadError(f"could not read saved source manifest {path}: {error}") from error
+    if not isinstance(payload, Mapping) or payload.get("schemaVersion") != 2:
+        raise UploadError(f"unsupported saved source manifest: {path}")
+    if payload.get("identity") != "relative-filename-and-byte-size":
+        raise UploadError(f"saved source manifest has an unsupported identity: {path}")
+    source_value = payload.get("source")
+    raw_files = payload.get("files")
+    if not isinstance(source_value, str) or not source_value.strip():
+        raise UploadError(f"saved source manifest has no source path: {path}")
+    if not isinstance(raw_files, list) or not raw_files:
+        raise UploadError(f"saved source manifest has no files: {path}")
+
+    records: list[LocalFile] = []
+    seen_paths: set[str] = set()
+    for raw_file in raw_files:
+        if not isinstance(raw_file, Mapping):
+            raise UploadError(f"saved source manifest contains an invalid file: {path}")
+        relative_path = raw_file.get("path")
+        byte_count = raw_file.get("bytes")
+        checksum = raw_file.get("nameSizeChecksum")
+        if not isinstance(relative_path, str):
+            raise UploadError(f"saved source manifest contains an invalid path: {path}")
+        validate_relative_path(relative_path)
+        if relative_path in seen_paths:
+            raise UploadError(
+                f"saved source manifest contains duplicate path {relative_path!r}"
+            )
+        if isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count < 0:
+            raise UploadError(
+                f"saved source manifest contains an invalid size for {relative_path!r}"
+            )
+        expected_checksum = file_identity_checksum(relative_path, byte_count)
+        if checksum != expected_checksum:
+            raise UploadError(
+                f"saved source manifest checksum mismatch for {relative_path!r}"
+            )
+        seen_paths.add(relative_path)
+        records.append(
+            LocalFile(
+                path=relative_path,
+                bytes=byte_count,
+                name_size_checksum=expected_checksum,
+            )
+        )
+
+    records.sort(key=lambda record: record.path)
+    fingerprint_hash = hashlib.sha256()
+    for record in records:
+        fingerprint_hash.update(record.name_size_checksum.encode("ascii"))
+        fingerprint_hash.update(b"\n")
+    fingerprint = fingerprint_hash.hexdigest()
+    total_bytes = sum(record.bytes for record in records)
+    if payload.get("totalBytes") != total_bytes:
+        raise UploadError(f"saved source manifest total byte count is invalid: {path}")
+    if payload.get("fingerprint") != fingerprint:
+        raise UploadError(f"saved source manifest fingerprint is invalid: {path}")
+
+    return SourceSnapshot(
+        source=Path(source_value).expanduser().resolve(),
+        files=tuple(records),
+        total_bytes=total_bytes,
+        fingerprint=fingerprint,
     )
 
 

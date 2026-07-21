@@ -95,6 +95,17 @@ environment. B2-only mode still validates every source file and writes a
 per-pack direct manifest, but it skips GitHub ZIP creation and its extra disk
 space requirement.
 
+The batch scripts are resumable at the reciter boundary. Before auditing or
+downloading a reciter, they verify its saved source inventory against the live
+B2 prefix. A complete prefix is reported as `verified ...; skipping` and is not
+staged again. An interrupted or incomplete prefix is rebuilt and the uploader
+reuses every matching remote object by exact key and byte size.
+
+If the B2 credentials are not exported, each batch script prompts once and
+shares them with all of its child uploaders. Exporting the credentials remains
+recommended when running the verse and gapless commands as one shell chain,
+because those are two separate parent processes.
+
 ## Public B2 Library
 
 The Salamah Library release contains four schema-v2 SQLite objects for every

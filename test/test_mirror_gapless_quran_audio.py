@@ -54,6 +54,31 @@ class TruncatedResponse(FakeResponse):
 
 
 class GaplessQuranAudioMirrorTests(unittest.TestCase):
+    def test_batch_credentials_are_prompted_once_and_exported_for_children(self) -> None:
+        fake_stdin = mock.Mock()
+        fake_stdin.isatty.return_value = True
+        with (
+            mock.patch.dict(
+                mirror.os.environ,
+                {"B2_APPLICATION_KEY_ID": "", "B2_APPLICATION_KEY": ""},
+            ),
+            mock.patch.object(mirror.sys, "stdin", fake_stdin),
+            mock.patch("builtins.input", return_value="key-id") as prompt_id,
+            mock.patch.object(
+                mirror.getpass,
+                "getpass",
+                return_value="application-key",
+            ) as prompt_key,
+        ):
+            mirror.ensure_b2_credentials()
+            mirror.ensure_b2_credentials()
+
+            self.assertEqual("key-id", mirror.os.environ["B2_APPLICATION_KEY_ID"])
+            self.assertEqual("application-key", mirror.os.environ["B2_APPLICATION_KEY"])
+
+        prompt_id.assert_called_once()
+        prompt_key.assert_called_once()
+
     def test_default_request_keeps_certificate_and_hostname_verification_enabled(
         self,
     ) -> None:
@@ -259,6 +284,48 @@ class GaplessQuranAudioMirrorTests(unittest.TestCase):
         )
         self.assertFalse(any("APPLICATION_KEY" in part for part in command))
 
+    def test_b2_state_verification_skips_only_an_exact_saved_file_set(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            state.mkdir()
+            (state / "source-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "files": [
+                            {"path": "001.mp3"},
+                            {"path": "manifest.json"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            completed = mirror.subprocess.CompletedProcess([], 0)
+            with mock.patch.object(
+                mirror.subprocess,
+                "run",
+                return_value=completed,
+            ) as run:
+                exact = mirror.b2_state_is_complete(
+                    direct_directory=root / "direct",
+                    bucket="public-bucket",
+                    prefix="release/audio/test",
+                    state_directory=state,
+                    expected_names=("001.mp3",),
+                )
+                wrong_pack = mirror.b2_state_is_complete(
+                    direct_directory=root / "direct",
+                    bucket="public-bucket",
+                    prefix="release/audio/test",
+                    state_directory=state,
+                    expected_names=("002.mp3",),
+                )
+
+        self.assertTrue(exact)
+        self.assertFalse(wrong_pack)
+        run.assert_called_once()
+        self.assertIn("--verify-state-only", run.call_args.args[0])
+
     def test_b2_only_manifest_does_not_require_github_archives(self) -> None:
         pack = mirror.GaplessPack(
             pack_id="1",
@@ -317,6 +384,12 @@ class GaplessQuranAudioMirrorTests(unittest.TestCase):
             mock.patch.object(mirror, "audit_pack", return_value=()),
             mock.patch.object(mirror, "write_audit"),
             mock.patch.object(mirror, "stage_pack", return_value=(local_file,)),
+            mock.patch.object(mirror, "ensure_b2_credentials"),
+            mock.patch.object(
+                mirror,
+                "b2_state_is_complete",
+                return_value=False,
+            ),
             mock.patch.object(mirror, "build_archives") as build_archives,
             mock.patch.object(
                 mirror,
@@ -342,6 +415,44 @@ class GaplessQuranAudioMirrorTests(unittest.TestCase):
         self.assertIsNone(write_pack_manifest.call_args.args[4])
         publish_b2.assert_called_once()
         publish_github.assert_not_called()
+
+    def test_b2_only_main_skips_completed_pack_before_audit(self) -> None:
+        pack = mirror.GaplessPack(
+            pack_id="1",
+            path_slug="safe_slug",
+            timing_database_name="timing",
+            source_base_url="https://example.com/",
+            file_count=1,
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(mirror, "load_catalog", return_value=(pack,)),
+            mock.patch.object(mirror, "ensure_b2_credentials") as credentials,
+            mock.patch.object(
+                mirror,
+                "b2_state_is_complete",
+                return_value=True,
+            ) as state_complete,
+            mock.patch.object(mirror, "audit_pack") as audit_pack,
+            mock.patch.object(mirror, "stage_pack") as stage_pack,
+            mock.patch.object(mirror, "publish_b2") as publish_b2,
+        ):
+            result = mirror.main(
+                [
+                    "--work-dir",
+                    directory,
+                    "--b2-bucket",
+                    "public-bucket",
+                    "--skip-github",
+                ]
+            )
+
+        self.assertEqual(0, result)
+        credentials.assert_called_once()
+        state_complete.assert_called_once()
+        audit_pack.assert_not_called()
+        stage_pack.assert_not_called()
+        publish_b2.assert_not_called()
 
     def test_github_publish_replaces_same_size_asset_with_wrong_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

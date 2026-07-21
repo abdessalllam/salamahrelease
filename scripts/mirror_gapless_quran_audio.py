@@ -8,6 +8,7 @@ import argparse
 import concurrent.futures
 import dataclasses
 import datetime as dt
+import getpass
 import hashlib
 import http.client
 import json
@@ -66,6 +67,27 @@ class LocalAudioFile:
 
 
 RequestFunction = Callable[[urllib.request.Request, int], Any]
+
+
+# Batch credentials are captured at the parent process so every reciter reuses
+# one prompt while child uploaders still receive secrets only through the environment.
+def ensure_b2_credentials() -> None:
+    application_key_id = os.environ.get("B2_APPLICATION_KEY_ID", "").strip()
+    application_key = os.environ.get("B2_APPLICATION_KEY", "")
+    if application_key_id and application_key:
+        return
+    if not sys.stdin.isatty():
+        raise MirrorError(
+            "set B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY before B2 publication"
+        )
+    if not application_key_id:
+        application_key_id = input("Backblaze application key ID: ").strip()
+    if not application_key:
+        application_key = getpass.getpass("Backblaze application key: ")
+    if not application_key_id or not application_key:
+        raise MirrorError("Backblaze credentials cannot be blank")
+    os.environ["B2_APPLICATION_KEY_ID"] = application_key_id
+    os.environ["B2_APPLICATION_KEY"] = application_key
 
 
 def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
@@ -553,6 +575,58 @@ def publish_b2(
     subprocess.run(command, check=True)
 
 
+# Saved uploader state is checked before source work so a resumed B2-only batch
+# can skip complete reciters without downloading their audio again.
+def b2_state_is_complete(
+    direct_directory: Path,
+    bucket: str,
+    prefix: str,
+    state_directory: Path,
+    expected_names: Sequence[str],
+) -> bool:
+    manifest_path = state_directory / "source-manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    raw_files = payload.get("files") if isinstance(payload, Mapping) else None
+    if not isinstance(raw_files, list):
+        return False
+    saved_names = {
+        item.get("path")
+        for item in raw_files
+        if isinstance(item, Mapping) and isinstance(item.get("path"), str)
+    }
+    if len(saved_names) != len(raw_files):
+        return False
+    if saved_names != {*expected_names, "manifest.json"}:
+        return False
+
+    uploader = REPOSITORY_ROOT / "scripts" / "upload_public_to_b2.py"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(uploader),
+            "--source",
+            str(direct_directory),
+            "--bucket",
+            bucket,
+            "--prefix",
+            prefix,
+            "--state-dir",
+            str(state_directory),
+            "--verify-state-only",
+            "--quiet",
+        ],
+        check=False,
+    )
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 3:
+        return False
+    raise subprocess.CalledProcessError(completed.returncode, completed.args)
+
+
 def publish_github(
     files: Sequence[Path],
     repository: str,
@@ -688,13 +762,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.pack,
         )
         work_directory = arguments.work_dir.expanduser().resolve()
+        publishing_b2 = (
+            not arguments.audit_only
+            and not arguments.stage_only
+            and not arguments.skip_b2
+        )
+        if publishing_b2:
+            ensure_b2_credentials()
         for index, pack in enumerate(packs, start=1):
+            pack_root = work_directory / pack.path_slug
+            direct_directory = pack_root / "direct"
+            state_directory = pack_root / "b2-state"
+            b2_prefix = f"{arguments.b2_prefix.strip('/')}/{pack.path_slug}"
+            if (
+                publishing_b2
+                and arguments.skip_github
+                and not arguments.keep_stage
+                and b2_state_is_complete(
+                    direct_directory=direct_directory,
+                    bucket=arguments.b2_bucket,
+                    prefix=b2_prefix,
+                    state_directory=state_directory,
+                    expected_names=tuple(
+                        f"{number:03d}.mp3"
+                        for number in range(1, pack.file_count + 1)
+                    ),
+                )
+            ):
+                print(
+                    f"[{index}/{len(packs)}] verified {pack.path_slug}; skipping",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
             print(
                 f"[{index}/{len(packs)}] auditing {pack.path_slug}",
                 file=sys.stderr,
                 flush=True,
             )
-            pack_root = work_directory / pack.path_slug
             remote_files = audit_pack(
                 pack,
                 workers=arguments.audit_workers,
@@ -703,7 +808,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_audit(pack, remote_files, pack_root / "audit.json")
             if arguments.audit_only:
                 continue
-            direct_directory = pack_root / "direct"
             archive_directory = pack_root / "archives"
             local_files = stage_pack(
                 remote_files,
@@ -738,7 +842,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     pack=pack,
                     bucket=arguments.b2_bucket,
                     prefix=arguments.b2_prefix,
-                    state_directory=pack_root / "b2-state",
+                    state_directory=state_directory,
                 )
             if not arguments.skip_github:
                 if release_manifest is None:

@@ -812,13 +812,42 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.pack,
         )
         work_directory = arguments.work_dir.expanduser().resolve()
+        publishing_b2 = (
+            not arguments.audit_only
+            and not arguments.stage_only
+            and not arguments.skip_b2
+        )
+        if publishing_b2:
+            common.ensure_b2_credentials()
+        canonical_names = expected_verse_names()
         for index, pack in enumerate(packs, start=1):
+            pack_root = work_directory / pack.path_slug
+            direct_directory = pack_root / "direct"
+            state_directory = pack_root / "b2-state"
+            b2_prefix = f"{arguments.b2_prefix.strip('/')}/{pack.source_path}"
+            if (
+                publishing_b2
+                and arguments.skip_github
+                and not arguments.keep_stage
+                and common.b2_state_is_complete(
+                    direct_directory=direct_directory,
+                    bucket=arguments.b2_bucket,
+                    prefix=b2_prefix,
+                    state_directory=state_directory,
+                    expected_names=canonical_names,
+                )
+            ):
+                print(
+                    f"[{index}/{len(packs)}] verified {pack.path_slug}; skipping",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
             print(
                 f"[{index}/{len(packs)}] auditing {pack.path_slug}",
                 file=sys.stderr,
                 flush=True,
             )
-            pack_root = work_directory / pack.path_slug
             audit = audit_pack(pack, retries=arguments.retries)
             write_json(pack_root / "audit.json", audit)
             if arguments.audit_only:
@@ -835,7 +864,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 download_workers=arguments.download_workers,
                 retries=arguments.retries,
             )
-            direct_directory = pack_root / "direct"
             archive_directory = pack_root / "archives"
             should_package_github = arguments.stage_only or not arguments.skip_github
             if should_package_github:
@@ -871,7 +899,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     pack,
                     arguments.b2_bucket,
                     arguments.b2_prefix,
-                    pack_root / "b2-state",
+                    state_directory,
                 )
             if not arguments.skip_github:
                 if release_manifest is None:

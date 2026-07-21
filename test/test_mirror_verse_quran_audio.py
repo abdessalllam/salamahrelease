@@ -395,6 +395,12 @@ class VerseQuranAudioMirrorTests(unittest.TestCase):
                 "stage_pack",
                 return_value=((local_file,), None),
             ),
+            mock.patch.object(mirror.common, "ensure_b2_credentials"),
+            mock.patch.object(
+                mirror.common,
+                "b2_state_is_complete",
+                return_value=False,
+            ),
             mock.patch.object(
                 mirror,
                 "require_free_disk_space",
@@ -425,6 +431,47 @@ class VerseQuranAudioMirrorTests(unittest.TestCase):
         self.assertIsNone(write_pack_manifest.call_args.args[5])
         publish_b2.assert_called_once()
         publish_github.assert_not_called()
+
+    def test_b2_only_main_skips_completed_pack_before_audit(self) -> None:
+        pack = mirror.VersePack(
+            pack_id="1",
+            path_slug="test",
+            source_path="Test_Reciter",
+            archive_bytes=1,
+            file_count=6236,
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(mirror, "load_catalog", return_value=(pack,)),
+            mock.patch.object(
+                mirror.common,
+                "ensure_b2_credentials",
+            ) as credentials,
+            mock.patch.object(
+                mirror.common,
+                "b2_state_is_complete",
+                return_value=True,
+            ) as state_complete,
+            mock.patch.object(mirror, "audit_pack") as audit_pack,
+            mock.patch.object(mirror, "stage_pack") as stage_pack,
+            mock.patch.object(mirror, "publish_b2") as publish_b2,
+        ):
+            result = mirror.main(
+                [
+                    "--work-dir",
+                    directory,
+                    "--b2-bucket",
+                    "public-bucket",
+                    "--skip-github",
+                ]
+            )
+
+        self.assertEqual(0, result)
+        credentials.assert_called_once()
+        state_complete.assert_called_once()
+        audit_pack.assert_not_called()
+        stage_pack.assert_not_called()
+        publish_b2.assert_not_called()
 
 
 if __name__ == "__main__":

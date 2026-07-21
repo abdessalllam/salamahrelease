@@ -202,6 +202,102 @@ class UploadPublicToB2Tests(unittest.TestCase):
             self.assertIn("nameSizeChecksum", manifest["files"][0])
             self.assertNotIn("sha1", manifest["files"][0])
 
+    def test_saved_snapshot_loads_without_source_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            asset = source / "asset.bin"
+            asset.write_bytes(b"asset")
+            snapshot = uploader.snapshot_source(source, workers=1)
+            manifest_path = root / "source-manifest.json"
+            uploader.write_json_atomic(manifest_path, snapshot.to_json())
+            asset.unlink()
+
+            loaded = uploader.load_source_snapshot(manifest_path)
+
+        self.assertEqual(snapshot.source.resolve(), loaded.source)
+        self.assertEqual(snapshot.files, loaded.files)
+        self.assertEqual(snapshot.total_bytes, loaded.total_bytes)
+        self.assertEqual(snapshot.fingerprint, loaded.fingerprint)
+
+    def test_saved_snapshot_rejects_tampered_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "asset.bin").write_bytes(b"asset")
+            payload = uploader.snapshot_source(source, workers=1).to_json()
+            payload["files"][0]["bytes"] += 1
+            manifest_path = root / "source-manifest.json"
+            uploader.write_json_atomic(manifest_path, payload)
+
+            with self.assertRaises(uploader.UploadError):
+                uploader.load_source_snapshot(manifest_path)
+
+    def test_verify_state_only_does_not_inventory_deleted_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            state = root / "state"
+            source.mkdir()
+            state.mkdir()
+            (source / "asset.bin").write_bytes(b"asset")
+            snapshot = uploader.snapshot_source(source, workers=1)
+            uploader.write_json_atomic(
+                state / "source-manifest.json",
+                snapshot.to_json(),
+            )
+            for path in source.iterdir():
+                path.unlink()
+            source.rmdir()
+            result = {
+                "mode": "verified",
+                "bucketType": "allPublic",
+                "before": {"verified": 1},
+                "after": {"verified": 1},
+            }
+            client = mock.Mock()
+            with (
+                mock.patch.object(
+                    uploader,
+                    "snapshot_source",
+                    side_effect=AssertionError("source must not be inventoried"),
+                ) as snapshot_source,
+                mock.patch.object(
+                    uploader,
+                    "get_credentials",
+                    return_value=("key-id", "application-key"),
+                ),
+                mock.patch.object(uploader, "B2Cli", return_value=client),
+                mock.patch.object(
+                    uploader,
+                    "perform_upload",
+                    return_value=result,
+                ) as perform_upload,
+            ):
+                exit_code = uploader.main(
+                    [
+                        "--source",
+                        str(source),
+                        "--bucket",
+                        "public-bucket",
+                        "--prefix",
+                        "release",
+                        "--state-dir",
+                        str(state),
+                        "--verify-state-only",
+                        "--quiet",
+                    ]
+                )
+
+        self.assertEqual(0, exit_code)
+        snapshot_source.assert_not_called()
+        verified_snapshot = perform_upload.call_args.kwargs["snapshot"]
+        self.assertEqual(snapshot.files, verified_snapshot.files)
+        self.assertEqual(snapshot.fingerprint, verified_snapshot.fingerprint)
+        self.assertTrue(perform_upload.call_args.kwargs["verify_only"])
+
     def test_upload_replaces_different_size_then_resumes_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
